@@ -1,5 +1,9 @@
 import { Record, StableBTreeMap, Vec, Nat, match, Result, ic, Ed25519, Buffer } from 'azle';
 import { sha256 } from 'js-sha256';
+import * as crypto from 'crypto';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 /* SecureSocial */
 const messageStorage = new StableBTreeMap<string, SecureMessage>(0, 44, 1024);
@@ -149,7 +153,70 @@ const decrypt = (sharedSecret: string, encryptedMessage: string, nonce: string):
 };
 
 /* User Functions */
+export function login(payload: LoginPayload): Result<User, string> {
+    const passwordHash = sha256(payload.password);
+    const users = userStorage.values() ?? [];
+    const user = users.find((u) => u.email === payload.email && compareHashes(u.password, passwordHash));
+
+    return user ? Result.Ok<User, string>(user) : Result.Err<User, string>(`invalid email or password`);
+}
+
+// Helper function for secure hash comparison
+function compareHashes(hashA: string, hashB: string): boolean {
+    if (a.length !== b.length) {
+        return false;
+    }
+
+    let result = 0;
+    for (let i = 0; i < a.length; i++) {
+        result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    }
+
+    return result === 0;
+}
+
+function performEncryption(data: string, secretKey: string): string {
+    const ivLength = 16;
+    const iv = crypto.randomBytes(ivLength);
+    const cipher = crypto.createCipheriv('aes-256-gcm', secretKey, iv);
+    let encryptedData = cipher.update(data, 'utf8', 'hex');
+    encryptedData += cipher.final('hex');
+    const authTag = cipher.getAuthTag().toString('hex');
+    return iv.toString('hex') + ':' + authTag + ':' + encryptedData;
+}
+
+function performDecryption(encryptedData: string, secretKey: string): string {
+    const parts = encryptedData.split(':');
+    const iv = Buffer.from(parts.shift() as string, 'hex');
+    const authTag = Buffer.from(parts.shift() as string, 'hex');
+    const data = Buffer.from(parts.join(':'), 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', secretKey, iv);
+    decipher.setAuthTag(authTag);
+    let decryptedData = decipher.update(data, undefined, 'utf8');
+    decryptedData += decipher.final('utf8');
+    return decryptedData;
+}
+
+function encryptPrivateKey(privateKey: PrivateKey, secretKey: string): string {
+    const encryptedPrivateKey = performEncryption(privateKey, secretKey);
+    return encryptedPrivateKey;
+}
+
 export function createUser(payload: CreateUserPayload): Result<User, string> {
+    // Input validation
+    if (!payload.username || !payload.email || !payload.password) {
+        return Result.Err<User, string>('Username, email, and password are required.');
+    }
+    if (payload.username.length < 3 || payload.username.length > 30) {
+        return Result.Err<User, string>('Username must be between  3 and  30 characters long.');
+    }
+    if (!isEmailValid(payload.email)) {
+        return Result.Err<User, string>('Invalid email address.');
+    }
+    if (payload.password.length < 8 || payload.password.length > 30) {
+        return Result.Err<User, string>('Password must be between  8 and  30 characters long.');
+    }
+
     const id = sha256(payload.username + payload.email);
     const passwordHash = sha256(payload.password);
 
@@ -164,9 +231,16 @@ export function createUser(payload: CreateUserPayload): Result<User, string> {
     const newUserPrivateKey: PrivateKey = generateEphemeralKey().privateKey;
     userStorage.insert(newUser.id, newUser);
     userPublicKeyStorage.insert(newUser.id, newUser.publicKey);
-    userPrivateKeyStorage.insert(newUser.id, newUserPrivateKey);
+    const encryptedPrivateKey = encryptPrivateKey(newUserPrivateKey, process.env.SECRET_KEY);
+    userPrivateKeyStorage.insert(newUser.id, encryptedPrivateKey);
 
     return Result.Ok<User, string>(newUser);
+}
+
+// Helper function to validate email addresses using a simple regex
+function isEmailValid(email: string): boolean {
+    const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return regex.test(email);
 }
 
 export function getUser(id: string): Result<User, string> {
@@ -224,20 +298,24 @@ export function getMessages(payload: GetMessagesPayload): Result<Vec<SecureMessa
 /* Login Functions */
 export function login(payload: LoginPayload): Result<User, string> {
     const passwordHash = sha256(payload.password);
-    return match(userStorage.values(), {
-        Some: (users) => {
-            // Check if any user has the provided email and password
-            const user = users.find((u) => u.email === payload.email && u.password === passwordHash);
-            // If a user was found, return the user
-            if (user) {
-                return Result.Ok<User, string>(user);
-            } else {
-                // If a user was not found, return an error message
-                return Result.Err<User, string>(`invalid email or password`);
-            }
-        },
-        None: () => Result.Err<User, string>(`no users found`),
-    });
+    const users = userStorage.values() ?? [];
+    const user = users.find((u) => u.email === payload.email && compareHashes(u.password, passwordHash));
+
+    return user ? Result.Ok<User, string>(user) : Result.Err<User, string>(`invalid email or password`);
+}
+
+// Helper function for secure hash comparison
+function compareHashes(hashA: string, hashB: string): boolean {
+    if (a.length !== b.length) {
+        return false;
+    }
+
+    let result = 0;
+    for (let i = 0; i < a.length; i++) {
+        result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    }
+
+    return result === 0;
 }
 
 /* Unit Tests */
