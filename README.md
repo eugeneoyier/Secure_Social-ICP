@@ -1,4 +1,4 @@
-SecureSocial - Decentralized Encrypted Social Media Canister.
+SecureSocial - Decentralized Encrypted SocialMedia Canister.
 
 SecureSocial is a cutting-edge canister that revolutionizes encrypted communication and privacy in the realm of decentralized social media. Built on the Internet Computer Protocol (ICP), it guarantees end-to-end encryption for all messages, providing users with an impregnable and confidential platform for interaction.
 
